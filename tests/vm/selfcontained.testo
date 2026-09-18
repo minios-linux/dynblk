@@ -1,0 +1,37 @@
+machine dynblk {
+    cpus: 4
+    ram: 3Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 8Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test selfcontained {
+    dynblk {
+        start
+        wait "DYNBLK COW CUT READY" || "DYNBLK FAIL" timeout 90m
+        screenshot "${EVIDENCE}/cow-cut.png"
+        if (check "DYNBLK FAIL") { abort "Self-contained functional suite failed"; }
+        sleep 1s
+        stop
+        start
+        wait "DYNBLK GC CUT READY" || "DYNBLK FAIL" timeout 10m
+        screenshot "${EVIDENCE}/gc-cut.png"
+        if (check "DYNBLK FAIL") { abort "COW crash recovery failed"; }
+        sleep 1s
+        stop
+        start
+        wait "DYNBLK CHECKPOINT CUT READY" || "DYNBLK FAIL" timeout 10m
+        screenshot "${EVIDENCE}/checkpoint-cut.png"
+        if (check "DYNBLK FAIL") { abort "GC crash recovery failed"; }
+        sleep 1s
+        stop
+        start
+        wait "DYNBLK SELFCONTAINED PASS" || "DYNBLK SELFCONTAINED PARTIAL" || "DYNBLK FAIL" timeout 10m
+        screenshot "${EVIDENCE}/selfcontained-result.png"
+        if (check "DYNBLK FAIL") { abort "Checkpoint crash recovery failed"; }
+        if (check "DYNBLK SELFCONTAINED PARTIAL") { abort "Baseline passed but requested lower filesystems were rejected; see guest results"; }
+        stop
+    }
+}

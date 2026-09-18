@@ -1,0 +1,52 @@
+.TH MOUNT.DYNBLK 8 "2026-09-17" "Dynblk 1.0.0" "System Administration"
+.SH NAME
+mount.dynblk \- attach and mount existing dynblk storage
+.SH SYNOPSIS
+.B mount -t dynblk
+.I SOURCE TARGET
+.RB [ -o " OPTIONS" ]
+.SH DESCRIPTION
+The helper is an entry point of the native dynblk executable. It attaches an
+existing format-1 container, retains the whole-disk descriptor while mounting,
+and arms cookie-protected automatic detach after its last block-layer user
+closes. It does not create or format containers and has no resident daemon.
+A regular umount releases the mount; open descriptors, mounted partitions,
+bind mounts and references retained by lazy unmount delay device teardown.
+Manual dynblk load retains its explicit-unload lifetime.
+.SH OPTIONS
+.TP
+.B inner-fstype=TYPE
+Mount one concrete inner filesystem type, or auto-detect when omitted.
+Negative type filters beginning with no are not accepted.
+.TP
+.B partition=N
+Select a positive partition number. Without this option mount the whole disk;
+no partition is selected implicitly.
+.TP
+.B module=PATH
+Load a validated root-owned dynblk.ko when the module is not already loaded.
+.TP
+.B ro
+Attach all backing files read-only and expose a read-only block device.
+Selected live state is validated, but roots are not repaired and unused parts
+are not removed. Inner filesystem recovery is never forced by this helper.
+.TP
+.B -f
+Validate helper arguments without opening storage or loading modules.
+.PP
+Ordinary inner filesystem options are forwarded. Negative filesystem type
+filters, user mounts, remount, bind and loop setup are not helper operations.
+Both native format 1 and split sparse VMDK are supported. Use
+format=auto|dynblk|vmdk and cache=writeback|writethrough|none|directsync|unsafe.
+The default cache mode is writeback; direct modes currently require ext2/ext4
+backing storage. Unsafe deliberately omits durability barriers.
+.SH SAFETY
+Source paths follow dynblk ownership and namespace rules. The target must
+already exist. Execution requires real and effective root, not setuid elevation.
+Failed mounts release the helper-owned device; other attachments are not removed.
+Asynchronous cleanup can briefly retain file locks after unmount, so helper
+loads retry only a transient lock conflict for a bounded interval.
+.SH SEE ALSO
+.BR dynblk (8),
+.BR mount (8),
+.BR umount (8)

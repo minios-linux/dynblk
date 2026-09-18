@@ -1,0 +1,18 @@
+machine dynblk {
+    cpus: 2
+    ram: 2Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 8Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test mount {
+    dynblk {
+        start
+        wait "DYNBLK MOUNT PASS" || "DYNBLK FAIL" timeout 10m
+        screenshot "${EVIDENCE}/mount-result.png"
+        if (check "DYNBLK FAIL") { abort "Mount/readonly/autoclear acceptance failed"; }
+        stop
+    }
+}

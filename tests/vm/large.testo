@@ -1,0 +1,27 @@
+machine dynblk {
+    cpus: 4
+    ram: 4Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 24Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test large {
+    dynblk {
+        start
+        wait "DYNBLK LARGE 2G WRITTEN" || "DYNBLK FAIL" timeout 45m
+        if (check "DYNBLK FAIL") { abort "Large write failed before 2GiB"; }
+        wait "DYNBLK LARGE 4G WRITTEN" || "DYNBLK FAIL" timeout 45m
+        if (check "DYNBLK FAIL") { abort "Large write failed before 4GiB"; }
+        wait "DYNBLK LARGE 6G WRITTEN" || "DYNBLK FAIL" timeout 45m
+        if (check "DYNBLK FAIL") { abort "Large write failed before 6GiB"; }
+        wait "DYNBLK LARGE 8G WRITTEN" || "DYNBLK FAIL" timeout 45m
+        screenshot "${EVIDENCE}/large-written.png"
+        if (check "DYNBLK FAIL") { abort "Large write failed before 8GiB"; }
+        wait "DYNBLK LARGE PASS" || "DYNBLK FAIL" timeout 45m
+        screenshot "${EVIDENCE}/large-result.png"
+        if (check "DYNBLK FAIL") { abort "Large replay/check/headroom acceptance failed"; }
+        stop
+    }
+}

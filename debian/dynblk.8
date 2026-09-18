@@ -1,0 +1,142 @@
+.TH DYNBLK 8 "2026-09-17" "Dynblk 1.0.0" "System Administration"
+.SH NAME
+dynblk \- manage compressed native and split VMDK block devices
+.SH SYNOPSIS
+.B dynblk create PATH
+.RB [ --format " dynblk|vmdk" ]
+.RB [ --size " SIZE" ]
+.RB [ --compression " CODEC" ]
+.RB [ --part-size " SIZE" ]
+.RB [ --subformat " twoGbMaxExtentSparse" ]
+.RB [ --cache " MODE" ]
+.RB [ --map-memory-mb " N" ]
+.RB [ --module " FILE" ]
+.RB [ --execute ]
+.br
+.B dynblk load PATH
+.RB [ --format " auto|dynblk|vmdk" ]
+.RB [ --cache " MODE" ]
+.RB [ --map-memory-mb " N" ]
+.RB [ --read-only ]
+.RB [ --module " FILE" ]
+.RB [ --execute ]
+.br
+.B dynblk status /dev/dynblkN
+.RB [ --json ]
+.br
+.B dynblk grow /dev/dynblkN SIZE
+.RB [ --execute ]
+.br
+.B dynblk unload /dev/dynblkN
+.RB [ --execute ]
+.br
+.B dynblk inspect PATH --metadata-only
+.RB [ --json ]
+.br
+.B dynblk check PATH
+.RB [ --json ]
+.SH DESCRIPTION
+DynBlk exposes file-backed disks through /dev/dynblkN on Linux 6.12.
+Native format 1 provides compression and split sparse storage. The VMDK
+backend supports twoGbMaxExtentSparse without parents or compression.
+No daemon, FUSE or QEMU runtime is required. CLI commands never create or
+resize the filesystem inside the device.
+.PP
+Native images use the DBSPRS01 layout with format number 1.
+Unsupported layouts are rejected. Install matching CLI and module versions.
+.SH COMMANDS
+Create exclusively creates and attaches a new container; load opens existing
+storage and normally detects its format. Both print the assigned device.
+Grow takes an absolute capacity, never shrinks, and does not resize the inner
+filesystem. Unload uses the attachment cookie and refuses a device still in use.
+Status reports format, effective cache policy, memory accounting and capabilities.
+Inspect scans mapping metadata; check also reads mapped payloads and checks
+native compressed CRCs and decoding. Neither repairs storage.
+.SH OPTIONS
+.TP
+.B --execute
+Perform create/load/grow/unload instead of preview. Requires root.
+.TP
+.B --format
+Create: dynblk (default) or vmdk. Load: auto (default), dynblk or vmdk.
+.TP
+.B --cache
+writeback (default), writethrough, none, directsync or unsafe. This is a
+per-attachment setting, not an on-disk policy. None bypasses the host page
+cache but still honors flushes; it does not mean synchronous writes.
+Direct modes currently require ext2/ext4 backing storage. Writethrough and
+directsync synchronize every ordinary write. Unsafe deliberately omits
+persistence barriers and can corrupt the image after a crash.
+.TP
+.B --map-memory-mb
+Metadata-page cache budget, 1..64 MiB; default 1 MiB. Not a fraction of RAM
+and not a cap on mapped data. Scratch buffers and host page cache are additional.
+.TP
+.B --size
+Create-only capacity, default 16GiB.
+Use dynblk limits --format dynblk --json for the native geometry limit:
+standard geometry permits 64TiB with the current 65536-part resource guard.
+Split VMDK additionally has a descriptor-size limit below 1MiB.
+Integer bytes or
+KiB/MiB/GiB/TiB suffixes, positive and divisible by 4096.
+.TP
+.B --part-size
+Native physical file cap, 1MiB..4000MiB (default 4000MiB), 4096-aligned.
+Smaller caps also reduce logical span and maximum capacity with 65536 parts.
+.TP
+.B dynblk limits [--format dynblk|vmdk] [--part-size SIZE] [--json]
+Report implementation geometry limits without root, a device or module loading.
+VMDK descriptor length, open-file limits and available resources may impose
+lower practical limits. Native disk format remains 1.
+.TP
+.B --subformat
+VMDK creation supports only twoGbMaxExtentSparse.
+.TP
+.B --compression
+Native-only codec: none (default), lz4, lz4hc, lzo, lzo-rle, zstd, deflate or 842.
+The corresponding kernel provider must be available. VMDK requires none.
+.TP
+.B --read-only
+Load without modifying backing storage, including recovery. Growth and writes
+are rejected. Read-only mounts are available through mount.dynblk as well.
+.TP
+.B --module
+Use an existing, trusted absolute path to dynblk.ko; otherwise use modprobe.
+.TP
+.B --json
+Machine-readable status/inspection result, including effective cache and format.
+.SH PATHS AND LIMITATIONS
+Use canonical absolute paths without symlink components and single-link regular
+files. Backing paths may be user-owned or user-writable, including FAT/exFAT
+mounts with synthetic ownership and permissions. Primary basenames contain only
+letters, digits, dots, underscores and hyphens; sibling paths must not escape the
+directory. Writable attachments hold exclusive cooperative locks; readers use
+shared locks. A user who can write the backing directory can still corrupt,
+rename or delete the image; external writers that ignore locks are unsupported.
+.PP
+Native compressed partial writes currently recompress a 64-KiB grain. Native
+and VMDK discard unmap wholly freed grains and reuse storage. On ext4, freed
+file blocks can be punched automatically; other backing filesystems only trim
+free tails. Live relocation requires an explicit reclaim --compact command. Raw data has no stored checksum; full
+check validates its readability, not every possible corruption. Mapping metadata
+is not journaled. See FORMAT.md for synchronization ordering and limits.
+.SH SEE ALSO
+.BR mount.dynblk (8), mount (8), umount (8)
+
+.SH RECLAIM
+.B dynblk reclaim /dev/dynblkN [--compact] [--scan-zeroes] [--max-steps N] [--execute] [--json]
+.br
+By default, return unreferenced ext4 file blocks and truncate free tails without
+moving live data. On exFAT and other filesystems without hole punching, only
+free tails are truncated. Automatic discard handling never relocates live data.
+.PP
+--compact explicitly enables online in-place relocation into free earlier runs.
+It is never an automatic fallback. No format conversion or second image is used.
+--scan-zeroes additionally reads mapped grains to find wholly zero payloads.
+The command does not issue filesystem FITRIM; run fstrim on the inner filesystem
+first when discovering deleted files is needed. Do not use the merged live root.
+.PP
+Without --execute, no device is opened. With --max-steps, complete:false in JSON
+means the bounded pass stopped early. Safe completed steps remain in place.
+Read-only and unsafe-cache attachments reject reclamation. Punch-range and
+truncated-length counters are not measurements of physical allocated-byte savings.

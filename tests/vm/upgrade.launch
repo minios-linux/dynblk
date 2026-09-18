@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+mkdir -p /evidence
+set +e
+/usr/bin/python3 -u /opt/package-test/upgrade.py 2>&1 | tee -a /evidence/guest.log
+statuses=("${PIPESTATUS[@]}")
+result=${statuses[0]}
+test "${statuses[1]}" = 0 || result=1
+set -e
+if test "$result" = 20; then
+    sync
+    for unused in $(seq 1 12); do
+        printf '\033[2J\033[HDYNBLK UPGRADE REBOOT\n' > /dev/tty1
+        sleep 1
+    done
+    systemctl reboot
+    sleep infinity
+fi
+printf '%s\n' "$result" > /evidence/exit-code
+printf '%s\n' "${statuses[*]}" > /evidence/pipeline-status
+(cd /evidence && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
+sync
+if test "$result" = 0; then marker='DYNBLK PACKAGE PASS'; else marker='DYNBLK PACKAGE FAIL'; fi
+while :; do
+    printf '\033[2J\033[H%s\n' "$marker" > /dev/tty1
+    sleep 5
+done

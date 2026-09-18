@@ -1,0 +1,21 @@
+machine dynblk {
+    cpus: 4
+    ram: 4Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 16Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test package {
+    dynblk {
+        start
+        wait "DYNBLK PACKAGE PASS" || "DYNBLK PACKAGE FAIL" timeout 30m
+        screenshot "${EVIDENCE}/package-result.png"
+        if (check "DYNBLK PACKAGE FAIL") {
+            stop
+            abort "Real Debian package lifecycle failed";
+        }
+        stop
+    }
+}

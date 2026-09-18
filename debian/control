@@ -1,0 +1,31 @@
+Source: dynblk
+Section: admin
+Priority: optional
+Maintainer: crims0n <crims0n@minios.dev>
+Build-Depends: debhelper-compat (= 13), dh-sequence-dkms, python3, zlib1g-dev,
+ liblz4-1 <!nocheck>, libzstd1 <!nocheck>, qemu-utils <!nocheck>
+Standards-Version: 4.7.2
+Homepage: https://github.com/minios-linux/dynblk
+Rules-Requires-Root: no
+
+Package: dynblk
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, kmod, mount
+Recommends: dynblk-dkms (= ${binary:Version})
+Suggests: liblz4-1, libzstd1, zlib1g
+Description: self-contained block storage control and offline checker
+ Controls the dynblk kernel block device and validates detached format-1
+ storage with one native executable. No Python runtime, FUSE implementation,
+ filesystem utilities or legacy command aliases are included.
+ Provides a mount helper with kernel-managed automatic device cleanup.
+
+Package: dynblk-dkms
+Section: kernel
+Architecture: all
+Depends: ${misc:Depends}, dkms (>= 3.2.2)
+Recommends: dynblk (= ${binary:Version})
+Description: self-contained block storage module source for DKMS
+ Builds dynblk for Linux 6.12 using DKMS. Matching headers for each target
+ kernel are required; other kernel series are not supported.
+ Package configuration and kernel updates build and install the module but
+ do not request loading it. No storage is created by this package.

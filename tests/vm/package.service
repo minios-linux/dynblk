@@ -1,0 +1,14 @@
+[Unit]
+Description=Disposable dynblk Debian package lifecycle acceptance
+After=local-fs.target systemd-udev-trigger.service
+ConditionKernelCommandLine=dynblk_package_test=1
+
+[Service]
+Type=oneshot
+ExecStart=/opt/package-test/launch
+StandardOutput=journal+console
+StandardError=inherit
+TimeoutStartSec=25min
+
+[Install]
+WantedBy=multi-user.target

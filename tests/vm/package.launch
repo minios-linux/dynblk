@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+mkdir -p /evidence
+set +e
+# systemd's journal+console handles display. Getty can revoke persistent TTY
+# descriptors; the evidence logger must write only its regular file and stdout.
+/usr/bin/python3 -u /opt/package-test/package.py 2>&1 | tee /evidence/guest.log
+statuses=("${PIPESTATUS[@]}")
+result=${statuses[0]}
+test "${statuses[1]}" = 0 || result=1
+set -e
+printf '%s\n' "$result" > /evidence/exit-code
+printf '%s\n' "${statuses[*]}" > /evidence/pipeline-status
+(cd /evidence && sha256sum -- * > SHA256SUMS)
+sync
+if test "$result" = 0; then marker='DYNBLK PACKAGE PASS'; else marker='DYNBLK PACKAGE FAIL'; fi
+# Keep the final assertion visible until Testo stops this disposable VM.
+# A login prompt must not turn a completed failure into a 30-minute timeout.
+while :; do
+    printf '\033[2J\033[H%s\n' "$marker" > /dev/tty1
+    sleep 5
+done

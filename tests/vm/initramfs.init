@@ -1,0 +1,230 @@
+#!/bin/sh
+# Disposable Testo guest only: never invoke this script on the build host.
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PATH
+phase=0
+checks=0
+finish() {
+    result=$?
+    trap - EXIT
+    if [ -d /back/evidence ]; then
+        dmesg >"/back/evidence/dmesg-$phase.log"
+        firmware=bios
+        [ ! -d /sys/firmware/efi ] || firmware=uefi
+        printf '{"phase":%s,"checks":%s,"exit_code":%s,"firmware":"%s","boot_id":"%s"}\n' \
+            "$phase" "$checks" "$result" "$firmware" "$(cat /proc/sys/kernel/random/boot_id)" >"/back/evidence/boot-$phase.json"
+        (cd /back/evidence && sha256sum "guest-$phase.log" "dmesg-$phase.log" "boot-$phase.json" >"checksums-$phase")
+    fi
+    sync
+    exec >/dev/console 2>&1
+    if mountpoint -q /back; then umount /back || result=1; fi
+    if [ "$result" != 0 ]; then marker='DYNBLK INIT FAIL';
+    elif [ "$phase" = 1 ]; then marker='DYNBLK INIT RESTART';
+    else marker='DYNBLK INIT PASS'; fi
+    while :; do
+        printf '\033[2J\033[H%s\n' "$marker" >/dev/tty1
+        printf '%s\n' "$marker" >/dev/ttyS0
+        sleep 3
+    done
+}
+trap finish EXIT
+set -e
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+exec </dev/console >/dev/console 2>&1
+case " $(cat /proc/cmdline) " in *' dynblk_init_acceptance=1 '*) ;; *) exit 1 ;; esac
+[ "$(uname -r)" = '6.12.107+deb13-amd64' ]
+for driver in crc32c_generic ext4 ata_piix sd_mod; do modprobe "$driver"; done
+sleep 2
+[ "$(cat /sys/class/block/sda/size)" = 16777216 ]
+[ ! -e /dev/sdb ]
+[ "$(ls /sys/class/net)" = lo ]
+[ ! -d /sys/module/dynblk ]
+if ! blkid /dev/sda; then mke2fs -t ext4 -F -L DYNBLK-INIT /dev/sda; fi
+[ "$(blkid -s LABEL -o value /dev/sda)" = DYNBLK-INIT ]
+mount -t ext4 /dev/sda /back
+phase=1
+[ ! -f /back/phase1.done ] || phase=2
+mkdir -p /back/evidence /back/private /upper
+exec >"/back/evidence/guest-$phase.log" 2>&1
+printf 'BOOT %s\n' "$phase"
+uname -a
+/bin/busybox | head -n 1
+[ ! -e /usr/bin/python3 ]
+passed() { checks=$((checks + 1)); printf 'PASS %s\n' "$*"; }
+rejected() {
+    if "$@"; then printf 'UNEXPECTED SUCCESS: %s\n' "$*"; return 1; fi
+    passed "rejected: $*"
+}
+parts_hash() { sha256sum "$1"/volume*.db; }
+wait_block() {
+    n=0
+    while [ ! -b "$1" ] && [ "$n" -lt 10 ]; do sleep 1; n=$((n + 1)); done
+    [ -b "$1" ]
+}
+helper=/bin/dynblk
+main='/back/private/main space/volume000.db'
+if [ "$phase" = 1 ]; then
+    mkdir /back/private/default '/back/private/main space' /back/private/missing \
+        /back/private/unsafe /back/private/partitioned /back/private/large
+    $helper create /back/private/default/volume000.db
+    [ ! -e /back/private/default/volume000.db ] && [ ! -d /sys/module/dynblk ]
+    passed dry-run-nonmutation
+
+    default_dev=$($helper create /back/private/default/volume000.db --execute)
+    [ "$default_dev" = /dev/dynblk0 ] && [ -b "$default_dev" ] && [ -c /dev/dynblk-control ]
+    [ "$(wc -c </back/private/default/volume000.db)" = 12288 ]
+    [ "$(cat /sys/class/block/dynblk0/size)" = 33554432 ]
+    $helper unload "$default_dev" --execute
+    [ -d /sys/module/dynblk ] && [ -c /dev/dynblk-control ] && [ ! -e /dev/dynblk0 ]
+    passed persistent-control-and-default-16GiB
+
+    chmod 0777 /back/private/unsafe
+    unsafe_dev=$($helper create /back/private/unsafe/volume000.db --execute)
+    [ "$unsafe_dev" = /dev/dynblk0 ] && [ -e /back/private/unsafe/volume000.db ]
+    $helper unload "$unsafe_dev" --execute
+    passed writable-backing-directory-supported
+    printf keep >/back/private/missing/volume001.db
+    rejected "$helper" create /back/private/missing/volume000.db --execute
+    rejected "$helper" load /back/private/missing/volume000.db --execute
+    [ ! -e /back/private/missing/volume000.db ]
+    [ "$(cat /back/private/missing/volume001.db)" = keep ]
+
+    main_dev=$($helper create "$main" --size 67108864 --part-size 2097152 --execute)
+    [ "$main_dev" = /dev/dynblk0 ] && [ -b "$main_dev" ]
+    second_dev=$($helper load /back/private/default/volume000.db --execute)
+    [ "$second_dev" = /dev/dynblk1 ] && [ -b "$second_dev" ] && [ -b "$main_dev" ]
+    main_uuid=$($helper status "$main_dev" | sed -n 's/^uuid: //p')
+    second_uuid=$($helper status "$second_dev" | sed -n 's/^uuid: //p')
+    [ -n "$main_uuid" ] && [ -n "$second_uuid" ] && [ "$main_uuid" != "$second_uuid" ]
+    $helper unload "$second_dev" --execute
+    [ -b "$main_dev" ] && [ ! -e /dev/dynblk1 ]
+    rejected "$helper" load "$main" --execute
+    passed simultaneous-dynblk0-dynblk1-and-exclusive-backing
+
+    part_dev=$($helper create /back/private/partitioned/volume000.db --size 134217728 --execute)
+    [ "$part_dev" = /dev/dynblk1 ]
+    printf 'n\np\n1\n2048\n131071\nw\n' | fdisk -u "$part_dev"
+    sync
+    $helper unload "$part_dev" --execute
+    part_dev=$($helper load /back/private/partitioned/volume000.db --execute)
+    [ "$part_dev" = /dev/dynblk1 ]
+    part=${part_dev}p1
+    wait_block "$part"
+    mke2fs -t ext4 -F "$part"
+    mount -t ext4 "$part" /upper
+    printf 'partition data\n' >/upper/partition-marker
+    sync
+    rejected "$helper" unload "$part_dev" --execute
+    [ -b "$part" ] && [ "$(cat /upper/partition-marker)" = 'partition data' ]
+    umount /upper
+    $helper unload "$part_dev" --execute
+    passed partition-table-and-dynblk1p1
+
+    large_dev=$($helper create /back/private/large/volume000.db --size 512GiB --execute)
+    [ "$large_dev" = /dev/dynblk1 ]
+    [ "$(cat /sys/class/block/dynblk1/size)" = 1073741824 ]
+    $helper status "$large_dev" | grep -qx 'capacity_bytes: 549755813888'
+    $helper status "$large_dev" | grep -qx 'max_capacity_bytes: 549755813888'
+    $helper unload "$large_dev" --execute
+    passed thin-512GiB-capacity
+
+    mke2fs -t ext4 -F "$main_dev"
+    mount -t ext4 "$main_dev" /upper
+    dd if=/dev/urandom of=/upper/payload bs=65536 count=64
+    printf 'first boot data\n' >/upper/marker
+    sha256sum /upper/payload | cut -d ' ' -f 1 >/back/payload.sha256
+    sync
+    rejected "$helper" unload "$main_dev" --execute
+    [ -b "$main_dev" ] && [ "$(cat /upper/marker)" = 'first boot data' ]
+    umount /upper
+    $helper unload "$main_dev" --execute
+    [ "$(ls '/back/private/main space'/volume*.db | wc -l)" -gt 1 ]
+    passed multipart-filesystem-and-busy-detach
+
+    parts_hash '/back/private/main space' >/back/evidence/main-before.sha256
+    rejected "$helper" create "$main" --execute
+    parts_hash '/back/private/main space' >/back/evidence/main-after.sha256
+    cmp /back/evidence/main-before.sha256 /back/evidence/main-after.sha256
+    ln -s '/back/private/main space' /back/private/link
+    rejected "$helper" load /back/private/link/volume000.db --execute
+    ln "$main" /back/private/extra-link
+    rejected "$helper" load "$main" --execute
+    rm /back/private/extra-link
+
+    rmmod dynblk
+    [ ! -d /sys/module/dynblk ] && [ ! -e /dev/dynblk-control ]
+    direct_dev=$($helper load "$main" --module /test-modules/raw/dynblk.ko --execute)
+    [ "$direct_dev" = /dev/dynblk0 ]
+    mount -t ext4 "$direct_dev" /upper
+    [ "$(sha256sum /upper/payload | cut -d ' ' -f 1)" = "$(cat /back/payload.sha256)" ]
+    umount /upper
+    $helper unload "$direct_dev" --execute
+    rmmod dynblk
+    passed uncompressed-module-and-payload-reload
+
+    yes 'dynblk initramfs codec payload' | head -c 65536 >/back/codec-payload
+    for codec in none lz4 lz4hc lzo lzo-rle zstd deflate; do
+        dir=/back/private/codec-$codec
+        mkdir "$dir"
+        codec_dev=$($helper create "$dir/volume000.db" --size 67108864 --compression "$codec" --execute)
+        [ "$codec_dev" = /dev/dynblk0 ]
+        dd if=/back/codec-payload of="$codec_dev" bs=65536 count=1
+        sync
+        $helper unload "$codec_dev" --execute
+        codec_dev=$($helper load "$dir/volume000.db" --execute)
+        dd if="$codec_dev" of=/run/readback bs=65536 count=1
+        cmp /back/codec-payload /run/readback
+        $helper unload "$codec_dev" --execute
+        passed "codec-$codec-busybox-modprobe"
+    done
+    rmmod dynblk
+    [ ! -d /sys/module/dynblk ] && [ ! -e /dev/dynblk-control ] && [ ! -e /dev/dynblk0 ]
+    printf 'ready\n' >/back/phase1.done
+else
+    [ "$(cat /back/phase1.done)" = ready ]
+    main_dev=$($helper load "$main" --execute)
+    [ "$main_dev" = /dev/dynblk0 ]
+    mount -t ext4 "$main_dev" /upper
+    [ "$(cat /upper/marker)" = 'first boot data' ]
+    [ "$(sha256sum /upper/payload | cut -d ' ' -f 1)" = "$(cat /back/payload.sha256)" ]
+    printf 'second boot data\n' >/upper/after-reboot
+    umount /upper
+    $helper unload "$main_dev" --execute
+    main_dev=$($helper load "$main" --execute)
+    mount -t ext4 "$main_dev" /upper
+    [ "$(cat /upper/after-reboot)" = 'second boot data' ]
+    umount /upper
+    $helper unload "$main_dev" --execute
+    passed real-cold-boot-persistence-and-new-write
+
+    part_dev=$($helper load /back/private/partitioned/volume000.db --execute)
+    part=${part_dev}p1
+    wait_block "$part"
+    mount -t ext4 "$part" /upper
+    [ "$(cat /upper/partition-marker)" = 'partition data' ]
+    umount /upper
+    $helper unload "$part_dev" --execute
+    passed partition-rescan-after-cold-boot
+
+    large_dev=$($helper load /back/private/large/volume000.db --execute)
+    [ "$(cat /sys/class/block/$(basename "$large_dev")/size)" = 1073741824 ]
+    $helper unload "$large_dev" --execute
+    passed thin-512GiB-after-cold-boot
+
+    for codec in none lz4 lz4hc lzo lzo-rle zstd deflate; do
+        volume=/back/private/codec-$codec/volume000.db
+        codec_dev=$($helper load "$volume" --execute)
+        dd if="$codec_dev" of=/run/readback bs=65536 count=1
+        cmp /back/codec-payload /run/readback
+        $helper unload "$codec_dev" --execute
+        passed "codec-$codec-after-cold-boot"
+    done
+    rmmod dynblk
+fi
+[ ! -d /sys/module/dynblk ] && [ ! -e /dev/dynblk-control ] && \
+    [ ! -e /dev/dynblk0 ] && [ ! -e /dev/dynblk1 ]
+passed final-module-detached
+printf 'TOTAL %s\n' "$checks"
+exit 0

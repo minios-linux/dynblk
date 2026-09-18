@@ -1,0 +1,18 @@
+machine dynblk {
+    cpus: 4
+    ram: 3Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 8Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test audit_regressions {
+    dynblk {
+        start
+        wait "DYNBLK AUDIT PASS" || "DYNBLK FAIL" timeout 15m
+        screenshot "${EVIDENCE}/audit-result.png"
+        if (check "DYNBLK FAIL") { abort "Dynblk audit-regression suite failed"; }
+        stop
+    }
+}

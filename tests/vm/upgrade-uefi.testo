@@ -1,0 +1,28 @@
+machine dynblk {
+    cpus: 4
+    ram: 4Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 16Gb }
+    video main: { adapter_type: "qxl" }
+    loader: "/usr/share/OVMF/OVMF_CODE_4M.fd"
+}
+
+[snapshots: "never"]
+test package_upgrade {
+    dynblk {
+        start
+        wait "DYNBLK UPGRADE REBOOT" || "DYNBLK PACKAGE FAIL" timeout 30m
+        screenshot "${EVIDENCE}/before-kernel-reboot.png"
+        if (check "DYNBLK PACKAGE FAIL") {
+            stop
+            abort "Snapshot/kernel installation failed";
+        }
+        wait "DYNBLK PACKAGE PASS" || "DYNBLK PACKAGE FAIL" timeout 10m
+        screenshot "${EVIDENCE}/after-kernel-reboot.png"
+        if (check "DYNBLK PACKAGE FAIL") {
+            stop
+            abort "Updated-kernel boot or data verification failed";
+        }
+        stop
+    }
+}

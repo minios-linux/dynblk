@@ -1,0 +1,18 @@
+machine dynblk {
+    cpus: 4
+    ram: 4Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 8Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test checker {
+    dynblk {
+        start
+        wait "DYNBLK CHECKER PASS" || "DYNBLK FAIL" timeout 15m
+        screenshot "${EVIDENCE}/checker-result.png"
+        if (check "DYNBLK FAIL") { abort "Installed checker acceptance failed"; }
+        stop
+    }
+}

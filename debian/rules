@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/pkg-info.mk
+include /usr/share/dpkg/buildflags.mk
+
+DKMS_SOURCE = debian/dynblk-dkms/usr/src/dynblk-$(DEB_VERSION_UPSTREAM)
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	$(MAKE) dynblk CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)"
+
+override_dh_auto_test:
+	test "$$(id -u)" != 0
+	$(MAKE) test CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
+		BUILD_DIR="$(CURDIR)/debian/storage-tests"
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR="$(CURDIR)/debian/tmp"
+	install -d "$(DKMS_SOURCE)"
+	install -m 0644 dynblk.c dynblk_engine.c dynblk_engine.h dynblk_uapi.h Kbuild "$(DKMS_SOURCE)/"
+
+override_dh_auto_clean:
+	$(MAKE) clean BUILD_DIR="$(CURDIR)/debian/storage-tests"
+	rm -rf debian/storage-tests

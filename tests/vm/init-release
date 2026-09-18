@@ -1,0 +1,33 @@
+#!/bin/sh
+export PATH=/usr/sbin:/usr/bin:/bin:/sbin
+test "${dynblk_disposable_acceptance:-}" = 1 || exit 1
+test "${dynblk_selfcontained:-}" = 1 || exit 1
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+exec </dev/console >/dev/console 2>&1
+fail() {
+    echo "DYNBLK FAIL: $*"
+    dmesg > /back/dmesg-failure.txt 2>/dev/null
+    sync
+    while :; do sleep 3600; done
+}
+run() { "$@" || fail "$*"; }
+grep -qw dynblk_disposable_acceptance=1 /proc/cmdline || fail safety-token
+test "$(uname -m)" = x86_64 || fail architecture
+case "$(uname -r)" in 6.12.*) ;; *) fail kernel-version ;; esac
+for driver in crc32c_generic ext4 loop ata_piix sd_mod sr_mod virtio_pci virtio_blk; do run modprobe "$driver"; done
+test -x /sbin/modprobe || fail missing-autoload-helper
+sleep 3
+test -b /dev/sda || fail missing-scratch
+test ! -b /dev/sdb || fail extra-disk
+test "$(cat /sys/class/block/sda/size)" = "$(cat /release-sectors)" || fail disk-size
+if ! blkid /dev/sda; then run mke2fs -t ext4 -b 4096 -F -L DYNBLK-RELEASE /dev/sda; fi
+test "$(blkid -s LABEL -o value /dev/sda)" = DYNBLK-RELEASE || fail disk-label
+run mount -t ext4 /dev/sda /back
+touch /back/guest.log
+python3.13 -u /entrypoint.py >> /back/guest.log 2>&1 &
+worker=$!
+tail -f /back/guest.log | tee /dev/ttyS0 &
+wait "$worker" || fail release-suite
+while :; do sleep 3600; done

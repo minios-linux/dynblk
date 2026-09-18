@@ -1,0 +1,18 @@
+machine dynblk {
+    cpus: 2
+    ram: 1Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 8Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test lowmem1024 {
+    dynblk {
+        start
+        wait "DYNBLK LOWMEM 1024 PASS" || "DYNBLK FAIL" timeout 45m
+        screenshot "${EVIDENCE}/lowmem1024.png"
+        if (check "DYNBLK FAIL") { abort "1 GiB / 32 GiB dynblk low-memory acceptance failed"; }
+        stop
+    }
+}

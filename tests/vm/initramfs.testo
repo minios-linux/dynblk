@@ -1,0 +1,23 @@
+machine dynblk {
+    cpus: 4
+    ram: 3Gb
+    iso: { source: "${ISO}" }
+    disk scratch: { size: 8Gb }
+    video main: { adapter_type: "qxl" }
+}
+
+[snapshots: "never"]
+test initramfs_device {
+    dynblk {
+        start
+        wait "DYNBLK INIT RESTART" || "DYNBLK INIT FAIL" timeout 10m
+        screenshot "${EVIDENCE}/first-boot.png"
+        if (check "DYNBLK INIT FAIL") { stop; abort "Shell initramfs first boot failed"; }
+        stop
+        start
+        wait "DYNBLK INIT PASS" || "DYNBLK INIT FAIL" timeout 5m
+        screenshot "${EVIDENCE}/second-boot.png"
+        if (check "DYNBLK INIT FAIL") { stop; abort "Shell initramfs reload failed"; }
+        stop
+    }
+}
